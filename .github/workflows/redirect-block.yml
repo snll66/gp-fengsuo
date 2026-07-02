@@ -1,0 +1,38 @@
+name: Redirect Block/Unblock
+
+on:
+  workflow_dispatch:
+    inputs:
+      task_id:
+        description: 'Task ID from glass.js'
+        required: true
+        type: string
+      action:
+        description: 'Action to perform'
+        required: true
+        type: choice
+        options:
+          - block
+          - unblock
+
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: redirect-block
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Execute Redirect Rules
+        env:
+          TASK_ID: ${{ inputs.task_id }}
+          ACTION: ${{ inputs.action }}
+          GLASS_API_URL: ${{ secrets.GLASS_API_URL }}
+          REDIRECT_INTERNAL_KEY: ${{ secrets.REDIRECT_INTERNAL_KEY }}
+        run: node scripts/redirect-block.js
