@@ -214,28 +214,38 @@ async function unblockPathsInZone(token, zone, removePaths) {
 // ==================== glass.js API 通信 ====================
 
 async function fetchTaskData(apiUrl, key, taskId) {
+    console.log(`[Fetch] Connecting to ${apiUrl}/api/redirect/internal/task-data`);
+    console.log(`[Fetch] TaskId: ${taskId}`);
     const res = await fetch(`${apiUrl}/api/redirect/internal/task-data`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ taskId, key })
     });
     if (!res.ok) {
-        throw new Error(`Failed to fetch task data: HTTP ${res.status} ${await res.text()}`);
+        const errBody = await res.text();
+        throw new Error(`Failed to fetch task data: HTTP ${res.status} ${errBody}`);
     }
     const data = await res.json();
     if (!data.ok) {
         throw new Error(`Task data error: ${data.error || "Unknown"}`);
     }
+    console.log(`[Fetch] Success: action=${data.action}, paths=${data.paths?.length}, accounts=${data.accounts?.length}`);
     return data;
 }
 
 async function reportResult(apiUrl, key, taskId, results, status = "done") {
     try {
-        await fetch(`${apiUrl}/api/redirect/internal/result`, {
+        const res = await fetch(`${apiUrl}/api/redirect/internal/result`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ taskId, key, results, status })
         });
+        if (!res.ok) {
+            const text = await res.text();
+            console.error(`[Report] Failed to report result: HTTP ${res.status} ${text}`);
+        } else {
+            console.log(`[Report] Result reported successfully (status: ${status})`);
+        }
     } catch (e) {
         console.error("[Report] Failed to report result:", e.message);
     }
@@ -279,15 +289,23 @@ async function main() {
     const pathSet = new Set(paths);
 
     // 2. 串行遍历账号 × 域名
-    for (const acc of accounts) {
-        console.log(`\n[Account] ${acc.name}`);
+    for (let accIdx = 0; accIdx < accounts.length; accIdx++) {
+        const acc = accounts[accIdx];
+        console.log(`\n[Account ${accIdx + 1}/${accounts.length}] ${acc.name}`);
         let zoneOk = 0, zoneFail = 0;
         const zoneErrors = [];
         let totalAdded = 0, totalRemoved = 0;
+        let zoneCount = 0;
 
         try {
             const zones = await listZones(acc.token);
-            console.log(`  Zones: ${zones.length}`);
+            zoneCount = zones.length;
+            console.log(`  Zones: ${zoneCount}`);
+
+            if (zoneCount === 0) {
+                zoneErrors.push("No zones accessible with this token");
+                console.error(`  FAIL: No zones accessible with this token`);
+            }
 
             for (const zone of zones) {
                 try {
@@ -314,16 +332,24 @@ async function main() {
             console.error(`  Account error: ${e.message}`);
         }
 
+        const isOk = zoneFail === 0 && zoneOk > 0;
         results.push({
             accountName: acc.name,
-            ok: zoneFail === 0,
+            ok: isOk,
             zoneOk,
-            zoneCount: zoneOk + zoneFail,
+            zoneCount: zoneCount,
+            zoneFail,
             added: totalAdded,
             removed: totalRemoved,
-            error: zoneFail === 0 ? null : zoneErrors.join("; ")
+            error: isOk ? null : zoneErrors.join("; ")
         });
-        console.log(`  Summary: ${zoneOk}/${zoneOk + zoneFail} zones OK`);
+        console.log(`  Summary: ${zoneOk}/${zoneCount} zones OK${zoneFail > 0 ? ` (${zoneFail} failed)` : ''}`);
+
+        // 账号间间隔 1 秒，避免 API 速率限制
+        if (accIdx < accounts.length - 1) {
+            console.log(`  Waiting 1s before next account...`);
+            await sleep(1000);
+        }
     }
 
     // 3. 回写结果
