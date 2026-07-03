@@ -69,10 +69,15 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const RE_PATH_EXTRACT = /starts_with\(http\.request\.uri\.path,\s*"([^"]+)"\)/g;
 
+// CF Ruleset Engine 的 http.request.uri.path 返回 percent-encoded 路径
+// 存储层（blocked_paths_set）用 decoded 路径，写入 CF 规则时需 encode，读取时需 decode
+function toCfPath(p) { return encodeURI(p); }
+function fromCfPath(p) { try { return decodeURI(p); } catch { return p; } }
+
 function makeBlockRule(paths) {
     return {
         description: "glass-block-aggregated",
-        expression: paths.map(p => `starts_with(http.request.uri.path, "${p}")`).join(" or "),
+        expression: paths.map(p => `starts_with(http.request.uri.path, "${toCfPath(p)}")`).join(" or "),
         action: "redirect",
         action_parameters: {
             from_value: {
@@ -92,7 +97,7 @@ function buildBlockRules(pathSet) {
     let currentLen = 0;
 
     for (const p of allPaths) {
-        const part = `starts_with(http.request.uri.path, "${p}")`;
+        const part = `starts_with(http.request.uri.path, "${toCfPath(p)}")`;
         const addition = currentPaths.length === 0 ? part : ` or ${part}`;
         if (currentLen + addition.length > MAX_EXPR_LEN && currentPaths.length > 0) {
             rules.push(makeBlockRule(currentPaths));
@@ -165,7 +170,7 @@ async function blockPathsInZone(token, zone, newPaths) {
             let match;
             RE_PATH_EXTRACT.lastIndex = 0;
             while ((match = RE_PATH_EXTRACT.exec(rule.expression || "")) !== null) {
-                existingPaths.add(match[1]);
+                existingPaths.add(fromCfPath(match[1]));
             }
         } else {
             nonBlockRules.push(cleanNonBlockRule(rule));
@@ -197,10 +202,11 @@ async function unblockPathsInZone(token, zone, removePaths) {
             let match;
             RE_PATH_EXTRACT.lastIndex = 0;
             while ((match = RE_PATH_EXTRACT.exec(rule.expression || "")) !== null) {
-                if (removePaths.has(match[1])) {
+                const decoded = fromCfPath(match[1]);
+                if (removePaths.has(decoded)) {
                     removedCount++;
                 } else {
-                    remainingPaths.add(match[1]);
+                    remainingPaths.add(decoded);
                 }
             }
         } else {
