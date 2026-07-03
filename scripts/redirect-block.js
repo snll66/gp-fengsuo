@@ -18,10 +18,14 @@ const CF_API_BASE = "https://api.cloudflare.com/client/v4";
 
 async function cfFetch(tokenStr, path, init = {}) {
     const headers = { "Content-Type": "application/json" };
-    if (tokenStr.includes("|")) {
+    if (tokenStr.includes('@') && tokenStr.includes(':')) {
+        const idx = tokenStr.indexOf(':');
+        headers["X-Auth-Email"] = tokenStr.slice(0, idx).trim();
+        headers["X-Auth-Key"] = tokenStr.slice(idx + 1).trim();
+    } else if (tokenStr.includes("|")) {
         const idx = tokenStr.indexOf("|");
-        headers["X-Auth-Email"] = tokenStr.slice(0, idx);
-        headers["X-Auth-Key"] = tokenStr.slice(idx + 1);
+        headers["X-Auth-Email"] = tokenStr.slice(0, idx).trim();
+        headers["X-Auth-Key"] = tokenStr.slice(idx + 1).trim();
     } else {
         headers["Authorization"] = `Bearer ${tokenStr}`;
     }
