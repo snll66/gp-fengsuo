@@ -25,7 +25,7 @@
 const https = require('https');
 const http = require('http');
 
-// =========================================
+// ==========================================
 // 工具函数
 // ==========================================
 
@@ -435,7 +435,56 @@ async function sendTgMessage(text) {
   }
 }
 
-async function sendTgNotification(topPaths, threshold, banResults, aiText) {
+// ==========================================
+// 7.5 GitHub 泄露检测：从 flow.js 获取泄露用户名并封禁
+// ==========================================
+
+async function detectAndBanLeaks() {
+  const flowUrl = process.env.FLOW_URL;
+  const flowPwd = process.env.FLOW_PWD;
+  if (!flowUrl || !flowPwd) return { leaks: [], banResults: [] };
+
+  log('开始 GitHub 泄露检测...');
+  let leaks = [];
+  try {
+    const res = await fetch(`${flowUrl}/api/github-leak-tg`, {
+      headers: { 'X-Admin-Password': flowPwd },
+    }, 30000);
+
+    if (!res.ok) {
+      log(`⚠️ 泄露检测 API 错误: ${res.status}`);
+      return { leaks: [], banResults: [] };
+    }
+    const data = await res.json();
+    if (!data.success) {
+      log(`⚠️ 泄露检测返回失败: ${data.error}`);
+      return { leaks: [], banResults: [] };
+    }
+    leaks = data.leaks || [];
+    log(`泄露检测完成: 发现 ${leaks.length} 个泄露用户`);
+  } catch(e) {
+    log(`⚠️ 泄露检测异常: ${e.message}`);
+    return { leaks: [], banResults: [] };
+  }
+
+  if (leaks.length === 0) {
+    log('✅ 未发现 GitHub 泄露');
+    return { leaks: [], banResults: [] };
+  }
+
+  // 封禁泄露用户
+  const leakUsers = leaks.map(l => ({
+    username: l.username,
+    reason: `GitHub泄露: 路径 ${l.path} 被公开，泄露日期 ${l.date}`,
+  })).filter(u => u.username && u.username !== 'guest' && u.username !== '-');
+
+  log(`泄露用户: ${leakUsers.map(u => u.username).join(', ')}`);
+
+  const banResults = await banUsers(leakUsers);
+  return { leaks, banResults };
+}
+
+async function sendTgNotification(topPaths, threshold, banResults, aiText, leakInfo) {
   const tgToken = process.env.TG_TOKEN;
   const tgChatId = process.env.TG_CHATID;
   if (!tgToken || !tgChatId) {
@@ -457,12 +506,12 @@ async function sendTgNotification(topPaths, threshold, banResults, aiText) {
     msg += `\n`;
   }
 
-  // 封禁结果
+  // 流量封禁结果
   if (banResults.length > 0) {
     const blocked = banResults.filter(r => r.success);
     const failed = banResults.filter(r => !r.success);
     if (blocked.length > 0) {
-      msg += `✅ <b>已封禁</b>（${blocked.length}个）\n`;
+      msg += `✅ <b>流量超标封禁</b>（${blocked.length}个）\n`;
       blocked.forEach(r => { msg += ` 🔒 <b>${escapeHtml(r.username)}</b>\n`; });
       msg += `\n`;
     }
@@ -475,6 +524,26 @@ async function sendTgNotification(topPaths, threshold, banResults, aiText) {
     msg += `✅ 所有探针流量均在阈值范围内，未发现滥用\n\n`;
   } else if (threshold <= 0) {
     msg += `ℹ️ 流量封禁阈值为 0，封禁功能未启用\n\n`;
+  }
+
+  // GitHub 泄露检测
+  if (leakInfo && leakInfo.banResults.length > 0) {
+    const leakBlocked = leakInfo.banResults.filter(r => r.success);
+    const leakFailed = leakInfo.banResults.filter(r => !r.success);
+    msg += `🔔 <b>GitHub 泄露检测</b>（发现 ${leakInfo.leaks.length} 个）\n`;
+    if (leakBlocked.length > 0) {
+      leakBlocked.forEach(r => {
+        const leak = leakInfo.leaks.find(l => l.username === r.username);
+        const dateDisplay = leak?.date ? leak.date.substring(0,4)+'-'+leak.date.substring(4,6)+'-'+leak.date.substring(6,8) : '';
+        msg += ` 🔒 <b>${escapeHtml(r.username)}</b> · ${dateDisplay} 已封禁\n`;
+      });
+    }
+    if (leakFailed.length > 0) {
+      leakFailed.forEach(r => { msg += ` ⚠️ <b>${escapeHtml(r.username)}</b> ${escapeHtml(r.msg)}\n`; });
+    }
+    msg += `\n`;
+  } else if (leakInfo && leakInfo.leaks.length === 0) {
+    msg += `🔔 <b>GitHub 泄露检测：</b>未发现泄露\n\n`;
   }
 
   // AI 分析结果
@@ -517,14 +586,20 @@ async function main() {
     const glassAccounts = await getGlassAccounts();
     const accounts = mergeAccounts(flowConfigs, glassAccounts);
 
+    // 3. GitHub 泄露检测（与流量查询并行，互不阻塞）
+    log('并行执行：流量查询 + GitHub 泄露检测...');
+    const leakPromise = detectAndBanLeaks();
+
+    let topPaths = [];
+    let banResults = [];
+
     if (accounts.length === 0) {
       log('⚠️ 无可用账号，跳过流量查询');
     } else {
-      // 3. 查询 CF 流量 TOP3
-      const topPaths = await fetchTopPaths(accounts, pathPrefix);
+      // 4. 查询 CF 流量 TOP3
+      topPaths = await fetchTopPaths(accounts, pathPrefix);
 
-      // 4. 筛选超标路径并封禁
-      let banResults = [];
+      // 5. 筛选超标路径并封禁
       if (threshold > 0 && topPaths.length > 0) {
         const thresholdBytes = threshold * 1e9;
         const overLimitPaths = topPaths.filter(p => p.value > thresholdBytes);
@@ -543,32 +618,18 @@ async function main() {
             banResults = await banUsers(blockUsers);
           }
         }
-
-        // 7. AI 分析 + TG 通知（并行）
-        log('开始 AI 分析...');
-        const aiText = await getAiAnalysis();
-
-        // 8. 发送 TG 通知
-        await sendTgNotification(topPaths, threshold, banResults, aiText);
-      } else {
-        // 阈值为 0 也要做 AI 分析和 TG 通知
-        log('流量封禁阈值为 0（未启用封禁），仅执行 AI 分析');
-
-        const aiText = await getAiAnalysis();
-        await sendTgNotification(topPaths, threshold, [], aiText);
       }
     }
 
-    // 即使没有账号配置，也尝试做 AI 分析（用 flow.js 缓存的数据）
-    if (accounts.length === 0) {
-      log('无账号配置，仅执行 AI 分析...');
-      const aiText = await getAiAnalysis();
-      if (aiText) {
-        await sendTgMessage(`🤖 <b>AI 分析结果</b>\n${aiText}\n\n🤖 GitHub Actions · ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}`);
-      } else {
-        log('AI 分析无结果，不发送通知');
-      }
-    }
+    // 等待泄露检测完成
+    const leakInfo = await leakPromise;
+
+    // 6. AI 分析
+    log('开始 AI 分析...');
+    const aiText = await getAiAnalysis();
+
+    // 7. 发送 TG 通知（包含流量封禁 + 泄露检测 + AI 分析）
+    await sendTgNotification(topPaths, threshold, banResults, aiText, leakInfo);
 
     log('✅ 脚本执行完成');
   } catch(e) {
