@@ -1,6 +1,6 @@
 name: 🚫 流量监控·封禁+AI分析
 
-# 触发条件：定时 + 手动 
+# 触发条件：定时 + 手动
 # 默认每 2 小时执行一次（可自行修改 cron 表达式）
 # cron 说明：分 时 日 月 周（UTC 时间）
 # 0 */2 * * * = 每2小时 | 0 */6 * * * = 每6小时 | 0 8,20 * * * = 每天8点和20点
@@ -37,4 +37,4 @@ jobs:
           # Telegram 通知
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHATID: ${{ secrets.TG_CHATID }}
-        run: node .github/scripts/traffic-ban.js
+        run: node scripts/traffic-ban.js
