@@ -1,0 +1,40 @@
+name: 🚫 流量监控·封禁+AI分析
+
+# 触发条件：定时 + 手动
+# 默认每 2 小时执行一次（可自行修改 cron 表达式）
+# cron 说明：分 时 日 月 周（UTC 时间）
+# 0 */2 * * * = 每2小时 | 0 */6 * * * = 每6小时 | 0 8,20 * * * = 每天8点和20点
+on:
+  schedule:
+    - cron: '0 */2 * * *'
+  workflow_dispatch:  # 支持手动触发
+
+jobs:
+  traffic-ban:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 执行流量检测·封禁·AI分析
+        env:
+          # flow.js Worker（获取账号配置 + 阈值 + AI prompt）
+          FLOW_URL: ${{ secrets.FLOW_URL }}
+          FLOW_PWD: ${{ secrets.FLOW_PWD }}
+          # glass.js Worker（执行封禁）
+          GLASS_URL: ${{ secrets.GLASS_URL }}
+          GLASS_PWD: ${{ secrets.GLASS_PWD }}
+          # AI 分析（与 flow.js 中的 AI_API_KEY/AI_API_URL/AI_MODEL 相同）
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+          AI_API_URL: ${{ secrets.AI_API_URL }}
+          AI_MODEL: ${{ secrets.AI_MODEL }}
+          # Telegram 通知
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHATID: ${{ secrets.TG_CHATID }}
+        run: node .github/scripts/traffic-ban.js
