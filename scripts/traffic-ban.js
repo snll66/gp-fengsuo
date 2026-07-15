@@ -372,10 +372,11 @@ async function getAiAnalysis() {
     return '';
   }
 
-  // 2. 调用 AI API（最多重试 2 次，每次 60 秒超时）
+  // 2. 调用 AI API（最多重试 2 次，每次 5 分钟超时，超时放弃）
+  const AI_TIMEOUT_MS = 300000; // 5 分钟
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      log(`调用 AI API (第 ${attempt} 次): model=${aiModel}`);
+      log(`调用 AI API (第 ${attempt} 次): model=${aiModel}, 超时 ${AI_TIMEOUT_MS / 1000}s`);
       const res = await fetch(aiApiUrl, {
         method: 'POST',
         headers: {
@@ -388,7 +389,7 @@ async function getAiAnalysis() {
           max_tokens: 4096,
           temperature: 0.3,
         }),
-      }, 90000); // 90 秒超时，GitHub Actions 无限制
+      }, AI_TIMEOUT_MS); // 5 分钟超时，GitHub Actions 无限制
 
       if (res.ok) {
         const data = await res.json();
@@ -470,13 +471,20 @@ async function sendTgNotification(topPaths, threshold, banResults, aiText) {
       failed.forEach(r => { msg += ` ❌ <b>${escapeHtml(r.username)}</b> ${escapeHtml(r.msg)}\n`; });
       msg += `\n`;
     }
-  } else if (topPaths.length > 0) {
-    msg += `✅ 所有探针流量均在阈值范围内，无需封禁\n\n`;
+  } else if (threshold > 0 && topPaths.length > 0) {
+    msg += `✅ 所有探针流量均在阈值范围内，未发现滥用\n\n`;
+  } else if (threshold <= 0) {
+    msg += `ℹ️ 流量封禁阈值为 0，封禁功能未启用\n\n`;
   }
 
   // AI 分析结果
   if (aiText) {
     msg += `🤖 <b>分析结果</b>\n${aiText}\n\n`;
+  } else {
+    const aiApiKey = process.env.AI_API_KEY;
+    if (aiApiKey) {
+      msg += `🤖 <b>分析结果</b>\n⚠️ AI 分析超时或失败，已放弃\n\n`;
+    }
   }
 
   msg += `🤖 <i>GitHub Actions · ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}</i>`;
