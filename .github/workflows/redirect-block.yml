@@ -33,6 +33,7 @@ jobs:
         env:
           TASK_ID: ${{ inputs.task_id }}
           ACTION: ${{ inputs.action }}
-          GLASS_API_URL: ${{ secrets.GLASS_API_URL }}
+          # 2026-09-22 精简：改用统一的 GLASS_URL（原 GLASS_API_URL 是同一地址的第三份副本）
+          GLASS_API_URL: ${{ secrets.GLASS_URL }}
           REDIRECT_INTERNAL_KEY: ${{ secrets.REDIRECT_INTERNAL_KEY }}
         run: node scripts/redirect-block.js
