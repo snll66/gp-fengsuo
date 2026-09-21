@@ -22,9 +22,7 @@ jobs:
       - name: 执行 SaaS 幽灵协议
         env:
           # glass.js Worker（获取 SaaS 配置 + 执行域名更换）
-          WORKER_URL: ${{ secrets.WORKER_URL }}
-          ADMIN_PWD: ${{ secrets.ADMIN_PWD }}
-          # 兼容旧变量名（saas-engine 时代用的）
-          GLASS_URL: ${{ secrets.WORKER_URL }}
-          GLASS_PWD: ${{ secrets.ADMIN_PWD }}
+          # 2026-09-22 精简：原 WORKER_URL/ADMIN_PWD 已合并为 GLASS_URL/GLASS_PWD
+          GLASS_URL: ${{ secrets.GLASS_URL }}
+          GLASS_PWD: ${{ secrets.GLASS_PWD }}
         run: node scripts/engine.js
